@@ -29,6 +29,7 @@ def parse_args():
     parser.add_argument("--ngpus", default=8, type=int, help="Number of gpus to request on each node")
     parser.add_argument("--nodes", default=2, type=int, help="Number of nodes to request")
     parser.add_argument("--timeout", default=2800, type=int, help="Duration of the job")
+    parser.add_argument("--mem_per_gpu", default="60G", type=str, help="Memory per GPU")
 
     parser.add_argument("--partition", default="learnfair", type=str, help="Partition where to submit")
     parser.add_argument("--use_volta32", action='store_true', help="Big models? Use this")
@@ -37,14 +38,23 @@ def parse_args():
     return parser.parse_args()
 
 
-def get_shared_folder() -> Path:
-    user = os.getenv("USER")
-    if Path("/checkpoint/").is_dir():
-        p = Path(f"/checkpoint/{user}/experiments")
-        p.mkdir(exist_ok=True)
-        return p
-    raise RuntimeError("No shared folder available")
+# def get_shared_folder() -> Path:
+#     user = os.getenv("USER")
+#     if Path("/checkpoint/").is_dir():
+#         p = Path(f"/checkpoint/{user}/experiments")
+#         p.mkdir(exist_ok=True)
+#         return p
+#     raise RuntimeError("No shared folder available")
 
+def get_shared_folder() -> Path:
+    user = os.getenv("USER", default='user')
+    cur_file_path = Path("checkpoint").absolute()
+    p = Path(f"{cur_file_path}/{user}/experiments")
+    try:
+        p.mkdir(exist_ok=True, parents=True)
+        return p 
+    except NotADirectoryError:
+        raise RuntimeError("No shared folder available")
 
 def get_init_file():
     # Init file must not exist, but it's parent dir must exist.
@@ -96,6 +106,7 @@ def main():
     num_gpus_per_node = args.ngpus
     nodes = args.nodes
     timeout_min = args.timeout
+    mem_per_gpu = args.mem_per_gpu
 
     partition = args.partition
     kwargs = {}
@@ -105,10 +116,10 @@ def main():
         kwargs['slurm_comment'] = args.comment
 
     executor.update_parameters(
-        mem_gb=40 * num_gpus_per_node,
+        mem_per_gpu=mem_per_gpu,
         gpus_per_node=num_gpus_per_node,
         tasks_per_node=num_gpus_per_node,  # one task per GPU
-        cpus_per_task=10,
+        cpus_per_gpu=8,
         nodes=nodes,
         timeout_min=timeout_min,  # max is 60 * 72
         # Below are cluster dependent parameters
@@ -117,7 +128,7 @@ def main():
         **kwargs
     )
 
-    executor.update_parameters(name="dino")
+    executor.update_parameters(name="gpu_task")
 
     args.dist_url = get_init_file().as_uri()
 

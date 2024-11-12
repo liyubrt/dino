@@ -31,7 +31,7 @@ from torchvision import datasets, transforms
 from torchvision import models as torchvision_models
 
 import utils
-from data import pil_loader, UnlabeledDatasetFolder
+from data import pil_loader, UnlabeledDatasetFolder, CustomLargeDataset
 from model import NextVitSmall, load_weights
 import vision_transformer as vits
 from vision_transformer import DINOHead
@@ -147,7 +147,10 @@ def train_dino(args):
         args.local_crops_number,
     )
     # dataset = datasets.ImageFolder(args.data_path, transform=transform)
-    dataset = UnlabeledDatasetFolder(args.data_path, loader=pil_loader, extensions=["jpg"], transform=transform)
+    if 'openimages_coyo66m' in args.data_path or 'openimages_coyo145m' in args.data_path:
+        dataset = CustomLargeDataset(args.data_path, transform)
+    else:
+        dataset = UnlabeledDatasetFolder(args.data_path, loader=pil_loader, extensions=["jpg"], transform=transform)
     sampler = torch.utils.data.DistributedSampler(dataset, shuffle=True)
     data_loader = torch.utils.data.DataLoader(
         dataset,
