@@ -16,15 +16,31 @@ class UnlabeledDatasetFolder(datasets.DatasetFolder):
             sample = self.transform(sample)
         return sample
 
+# class CustomDataset(torch.utils.data.Dataset):
+#     def __init__(self, data_dir, transform):
+#         self.data = datasets.DatasetFolder(data_dir, loader=pil_loader, extensions=["jpg"], transform=transform)
+#         # self.data = datasets.ImageFolder(data_dir, loader=pil_loader, transform=transform)
+        
+#     def __len__(self):
+#         return len(self.data)
+    
+#     def __getitem__(self, index):
+#         return self.data[index][0]
+
 class CustomDataset(torch.utils.data.Dataset):
     def __init__(self, data_dir, transform):
-        self.data = datasets.DatasetFolder(data_dir, loader=pil_loader, extensions=["jpg"], transform=transform)
+        self.data_dir = os.path.join(data_dir, 'test')
+        self.df = pd.read_csv(os.path.join(data_dir, 'annotations', f'test_600classes.csv'))
+        self.transform = transform
         
     def __len__(self):
-        return len(self.data)
+        return len(self.df)
     
     def __getitem__(self, index):
-        return self.data[index][0]
+        row = self.df.iloc[index]
+        img_path = os.path.join(self.data_dir, row['ImageID']+'.jpg')
+        image = Image.open(img_path).convert('RGB')
+        return self.transform(image)
 
 class CustomLargeDataset(torch.utils.data.Dataset):
     def __init__(self, data_dir, transform):
@@ -32,6 +48,7 @@ class CustomLargeDataset(torch.utils.data.Dataset):
         # load OpenImages data df
         self.oi_data_path = '/data2/jupiter/datasets/OpenImages'
         oi_label_df = pd.read_csv(os.path.join(self.oi_data_path, 'annotations', f'train_600classes.csv'))
+        oi_label_df = oi_label_df[(oi_label_df.corrupted == False)]
         oi_label_df['data'] = 'openimages'
         # load COYO300M data df
         self.coyo_data_path = '/data2/jupiter/datasets/coyo-700m-webdataset'

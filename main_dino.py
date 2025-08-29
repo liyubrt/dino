@@ -31,8 +31,9 @@ from torchvision import datasets, transforms
 from torchvision import models as torchvision_models
 
 import utils
-from data import pil_loader, UnlabeledDatasetFolder, CustomLargeDataset
-from model import NextVitSmall, load_weights
+from data import pil_loader, UnlabeledDatasetFolder, CustomDataset, CustomLargeDataset
+# from model import NextVitSmall, load_weights
+from dinov3_model import DINOv3VIT7B
 import vision_transformer as vits
 from vision_transformer import DINOHead
 
@@ -48,7 +49,7 @@ def get_args_parser():
 
     # Model parameters
     parser.add_argument('--arch', default='vit_small', type=str,
-        choices=['vit_tiny', 'vit_small', 'vit_base', 'xcit', 'deit_tiny', 'deit_small', 'nextvit_small'] \
+        choices=['vit_tiny', 'vit_small', 'vit_base', 'xcit', 'deit_tiny', 'deit_small', 'nextvit_small', 'dinov3_vit7b'] \
                 + torchvision_archs + torch.hub.list("facebookresearch/xcit:main"),
         help="""Name of architecture to train. For quick experiments with ViTs,
         we recommend using vit_tiny or vit_small.""")
@@ -149,6 +150,8 @@ def train_dino(args):
     # dataset = datasets.ImageFolder(args.data_path, transform=transform)
     if 'openimages_coyo66m' in args.data_path or 'openimages_coyo145m' in args.data_path:
         dataset = CustomLargeDataset(args.data_path, transform)
+    elif 'OpenImages' in args.data_path:
+        dataset = CustomDataset(args.data_path, transform)
     else:
         dataset = UnlabeledDatasetFolder(args.data_path, loader=pil_loader, extensions=["jpg"], transform=transform)
     sampler = torch.utils.data.DistributedSampler(dataset, shuffle=True)
@@ -191,6 +194,10 @@ def train_dino(args):
         # load supervise pretrained weights
         student = load_weights(student)
         teacher = load_weights(teacher)
+    elif args.arch == "dinov3_vit7b":
+        student = DINOv3VIT7B()
+        teacher = DINOv3VIT7B()
+        embed_dim = 4096
     else:
         print(f"Unknow architecture: {args.arch}")
 
@@ -224,7 +231,7 @@ def train_dino(args):
     # there is no backpropagation through the teacher, so no need for gradients
     for p in teacher.parameters():
         p.requires_grad = False
-    print(f"Student and Teacher are built: they are both {args.arch} network.")
+    print(f"Student and Teacher are built: they are both {args.arch} network with {sum(p.numel() for p in teacher_without_ddp.parameters())} parameters")
 
     # ============ preparing loss ... ============
     dino_loss = DINOLoss(
@@ -308,6 +315,8 @@ def train_dino(args):
         if utils.is_main_process():
             with (Path(args.output_dir) / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
+        # if epoch == 2:
+        #     sys.exit()
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
@@ -448,16 +457,18 @@ class DataAugmentationDINO(object):
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
         ])
 
+        size1, size2 = 224, 96
+        # size1, size2 = 504, 216
         # first global crop
         self.global_transfo1 = transforms.Compose([
-            transforms.RandomResizedCrop(224, scale=global_crops_scale, interpolation=Image.BICUBIC),
+            transforms.RandomResizedCrop(size1, scale=global_crops_scale, interpolation=Image.BICUBIC),
             flip_and_color_jitter,
             utils.GaussianBlur(1.0),
             normalize,
         ])
         # second global crop
         self.global_transfo2 = transforms.Compose([
-            transforms.RandomResizedCrop(224, scale=global_crops_scale, interpolation=Image.BICUBIC),
+            transforms.RandomResizedCrop(size1, scale=global_crops_scale, interpolation=Image.BICUBIC),
             flip_and_color_jitter,
             utils.GaussianBlur(0.1),
             utils.Solarization(0.2),
@@ -466,7 +477,7 @@ class DataAugmentationDINO(object):
         # transformation for the local small crops
         self.local_crops_number = local_crops_number
         self.local_transfo = transforms.Compose([
-            transforms.RandomResizedCrop(96, scale=local_crops_scale, interpolation=Image.BICUBIC),
+            transforms.RandomResizedCrop(size2, scale=local_crops_scale, interpolation=Image.BICUBIC),
             flip_and_color_jitter,
             utils.GaussianBlur(p=0.5),
             normalize,

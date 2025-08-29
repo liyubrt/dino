@@ -28,7 +28,7 @@ def parse_args():
     parser = argparse.ArgumentParser("Submitit for DINO", parents=[main_dino.get_args_parser()])
     parser.add_argument("--ngpus", default=8, type=int, help="Number of gpus to request on each node")
     parser.add_argument("--nodes", default=2, type=int, help="Number of nodes to request")
-    parser.add_argument("--timeout", default=2800, type=int, help="Duration of the job")
+    parser.add_argument("--timeout", default=60*24*30, type=int, help="Duration of the job")
     parser.add_argument("--mem_per_gpu", default="60G", type=str, help="Memory per GPU")
 
     parser.add_argument("--partition", default="learnfair", type=str, help="Partition where to submit")
@@ -114,6 +114,8 @@ def main():
         kwargs['slurm_constraint'] = 'volta32gb'
     if args.comment:
         kwargs['slurm_comment'] = args.comment
+
+    # kwargs['exclude'] = 'stc01sppamxnl002,stc01sppamxnl003,stc01sppamxnl015,stc01sppamxnl016'
 
     executor.update_parameters(
         mem_per_gpu=mem_per_gpu,
