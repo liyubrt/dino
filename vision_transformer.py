@@ -289,3 +289,15 @@ class DINOHead(nn.Module):
         x = nn.functional.normalize(x, dim=-1, p=2)
         x = self.last_layer(x)
         return x
+
+
+if __name__ == "__main__":
+    x = torch.rand([4, 3, 512, 512]).cuda()  # BCHW
+
+    model = vit_small().cuda()
+    print("# parameters: ", sum(p.numel() for p in model.parameters() if p.requires_grad))
+    y = model.get_intermediate_layers(x, n=4)
+    print([_.shape for _ in y])
+    # # parameters:  21665664
+    # [torch.Size([4, 1025, 384]), torch.Size([4, 1025, 384]), torch.Size([4, 1025, 384]), torch.Size([4, 1025, 384])]
+    
