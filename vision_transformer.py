@@ -28,10 +28,10 @@ def drop_path(x, drop_prob: float = 0., training: bool = False):
     if drop_prob == 0. or not training:
         return x
     keep_prob = 1 - drop_prob
-    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
-    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets  # (4,1,1)
+    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)  # 4x1x1
     random_tensor.floor_()  # binarize
-    output = x.div(keep_prob) * random_tensor
+    output = x.div(keep_prob) * random_tensor  # 4x1025x384
     return output
 
 
@@ -68,9 +68,9 @@ class Mlp(nn.Module):
 class Attention(nn.Module):
     def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.):
         super().__init__()
-        self.num_heads = num_heads
-        head_dim = dim // num_heads
-        self.scale = qk_scale or head_dim ** -0.5
+        self.num_heads = num_heads  # 6 for vit_small
+        head_dim = dim // num_heads  # 384 // 6 -> 64
+        self.scale = qk_scale or head_dim ** -0.5  # 1/8, from head_dim
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
@@ -78,18 +78,18 @@ class Attention(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):
-        B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        B, N, C = x.shape  # 4x1025x384
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)  # 4x1025x1152 -> 4x1025x3x6x64 -> 3x4x6x1025x64
+        q, k, v = qkv[0], qkv[1], qkv[2]  # 4x6x1025x64
 
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
+        attn = (q @ k.transpose(-2, -1)) * self.scale  # 4x6x1025x64 @ 4x6x64x1025 -> 4x6x1025x1025
+        attn = attn.softmax(dim=-1)  # 4x6x1025x1025
+        attn = self.attn_drop(attn)  # 4x6x1025x1025
 
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        return x, attn
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)  # 4x6x1025x1025 @ 4x6x1025x64 -> 4x6x1025x64 -> 4x1025x6x64 -> 4x1025x384
+        x = self.proj(x)  # 4x1025x384
+        x = self.proj_drop(x)  # 4x1025x384
+        return x, attn  # 4x1025x384, 4x6x1025x1025
 
 
 class Block(nn.Module):
@@ -105,12 +105,12 @@ class Block(nn.Module):
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
     def forward(self, x, return_attention=False):
-        y, attn = self.attn(self.norm1(x))
+        y, attn = self.attn(self.norm1(x))  # 4x1025x384, 4x6x1025x1025
         if return_attention:
             return attn
-        x = x + self.drop_path(y)
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
-        return x
+        x = x + self.drop_path(y)  # 4x1025x384
+        x = x + self.drop_path(self.mlp(self.norm2(x)))  # 4x1025x384 -mlp-> 4x1025x384
+        return x  # 4x1025x384
 
 
 class PatchEmbed(nn.Module):
@@ -172,15 +172,15 @@ class VisionTransformer(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def interpolate_pos_encoding(self, x, w, h):
-        npatch = x.shape[1] - 1
-        N = self.pos_embed.shape[1] - 1
+        npatch = x.shape[1] - 1  # 1024
+        N = self.pos_embed.shape[1] - 1  # 196
         if npatch == N and w == h:
             return self.pos_embed
-        class_pos_embed = self.pos_embed[:, 0]
-        patch_pos_embed = self.pos_embed[:, 1:]
-        dim = x.shape[-1]
-        w0 = w // self.patch_embed.patch_size
-        h0 = h // self.patch_embed.patch_size
+        class_pos_embed = self.pos_embed[:, 0]  # 1x384
+        patch_pos_embed = self.pos_embed[:, 1:]  # 1x196x384
+        dim = x.shape[-1]  # 384
+        w0 = w // self.patch_embed.patch_size  # 32
+        h0 = h // self.patch_embed.patch_size  # 32
         # we add a small number to avoid floating point error in the interpolation
         # see discussion at https://github.com/facebookresearch/dino/issues/8
         w0, h0 = w0 + 0.1, h0 + 0.1
@@ -188,23 +188,23 @@ class VisionTransformer(nn.Module):
             patch_pos_embed.reshape(1, int(math.sqrt(N)), int(math.sqrt(N)), dim).permute(0, 3, 1, 2),
             scale_factor=(w0 / math.sqrt(N), h0 / math.sqrt(N)),
             mode='bicubic',
-        )
+        )  # change pos_embed shape from 1x196x384 -> 1x14x14x384 -> 1x384x14x14 -> 1x384x32x32
         assert int(w0) == patch_pos_embed.shape[-2] and int(h0) == patch_pos_embed.shape[-1]
-        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
-        return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)  # 1x1024x384
+        return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)  # 1x1025x384
 
     def prepare_tokens(self, x):
-        B, nc, w, h = x.shape
-        x = self.patch_embed(x)  # patch linear embedding
+        B, nc, w, h = x.shape  # 4x3x512x512
+        x = self.patch_embed(x)  # patch linear embedding  # 4x1024x384
 
         # add the [CLS] token to the embed patch tokens
-        cls_tokens = self.cls_token.expand(B, -1, -1)
-        x = torch.cat((cls_tokens, x), dim=1)
+        cls_tokens = self.cls_token.expand(B, -1, -1)  # 1x1x384 expands to 4x1x384
+        x = torch.cat((cls_tokens, x), dim=1)  # 4x1025x384
 
         # add positional encoding to each token
-        x = x + self.interpolate_pos_encoding(x, w, h)
+        x = x + self.interpolate_pos_encoding(x, w, h)  # 4x1025x384 + 1x1025x384 -> 4x1025x384
 
-        return self.pos_drop(x)
+        return self.pos_drop(x)  # 4x1025x384
 
     def forward(self, x):
         x = self.prepare_tokens(x)
@@ -223,11 +223,11 @@ class VisionTransformer(nn.Module):
                 return blk(x, return_attention=True)
 
     def get_intermediate_layers(self, x, n=1):
-        x = self.prepare_tokens(x)
+        x = self.prepare_tokens(x)  # 4x3x512x512 -> 4x1025x384
         # we return the output tokens from the `n` last blocks
         output = []
-        for i, blk in enumerate(self.blocks):
-            x = blk(x)
+        for i, blk in enumerate(self.blocks):  # 12 blocks
+            x = blk(x)  # 4x1025x384 -> 4x1025x384
             if len(self.blocks) - i <= n:
                 output.append(self.norm(x))
         return output
@@ -294,10 +294,10 @@ class DINOHead(nn.Module):
 if __name__ == "__main__":
     x = torch.rand([4, 3, 512, 512]).cuda()  # BCHW
 
-    model = vit_small().cuda()
-    print("# parameters: ", sum(p.numel() for p in model.parameters() if p.requires_grad))
+    model = vit_small(img_size=[224], drop_path_rate=0.1).cuda()
+    print("# parameters:", sum(p.numel() for p in model.parameters() if p.requires_grad))
     y = model.get_intermediate_layers(x, n=4)
     print([_.shape for _ in y])
-    # # parameters:  21665664
+    # # parameters: 21665664 for 224x224, 21983616 for 512x512
     # [torch.Size([4, 1025, 384]), torch.Size([4, 1025, 384]), torch.Size([4, 1025, 384]), torch.Size([4, 1025, 384])]
     
